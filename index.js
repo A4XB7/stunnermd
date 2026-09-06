@@ -6,6 +6,12 @@ const {
 
 const pino = require("pino");
 
+const menu = require("./commands/menu");
+const joke = require("./commands/joke");
+const game = require("./commands/game");
+const ping = require("./commands/ping");
+const help = require("./commands/help");
+
 async function startBot() {
   const { state, saveCreds } =
     await useMultiFileAuthState("./session");
@@ -19,7 +25,7 @@ async function startBot() {
 
   sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
     if (connection === "open") {
-      console.log("⚡ STUNNER MD is connected!");
+      console.log("⚡ STUNNER MD connected!");
     }
 
     if (connection === "close") {
@@ -45,71 +51,11 @@ async function startBot() {
 
     const command = text.trim().toLowerCase();
 
-    if (command === "/ping") {
-      await sock.sendMessage(msg.key.remoteJid, {
-        text: "🏓 Pong!\n⚡ STUNNER MD is online."
-      });
-    }
-
-    if (command === "/menu") {
-      await sock.sendMessage(msg.key.remoteJid, {
-        text:
-`╭━━━〔 ⚡ STUNNER MD ⚡ 〕━━━╮
-┃
-┃ 📌 COMMANDS
-┃
-┃ /menu
-┃ /joke
-┃ /game
-┃ /ping
-┃ /help
-┃
-╰━━━━━━━━━━━━━━━━━━━━━━╯`
-      });
-    }
-
-    if (command === "/joke") {
-      const jokes = [
-        "😂 Why did the computer go to the doctor? It had a virus!",
-        "🤣 What do you call a sleeping computer? A nap-top!",
-        "😂 Why was the phone wearing glasses? It lost its contacts!"
-      ];
-
-      const joke =
-        jokes[Math.floor(Math.random() * jokes.length)];
-
-      await sock.sendMessage(msg.key.remoteJid, {
-        text: joke
-      });
-    }
-
-    if (command === "/help") {
-      await sock.sendMessage(msg.key.remoteJid, {
-        text:
-`🆘 STUNNER MD HELP
-
-/menu - Show menu
-/joke - Random joke
-/game - Game
-/ping - Check bot
-/help - Help`
-      });
-    }
-
-    if (command === "/game") {
-      const number = Math.floor(Math.random() * 10) + 1;
-
-      await sock.sendMessage(msg.key.remoteJid, {
-        text:
-`🎮 STUNNER MD GAME
-
-I'm thinking of a number from 1 to 10.
-
-Your challenge: guess it! 😎
-
-Hint: The number is ${number}.`
-      });
-    }
+    if (command === "/menu") await menu(sock, msg);
+    else if (command === "/joke") await joke(sock, msg);
+    else if (command === "/game") await game(sock, msg);
+    else if (command === "/ping") await ping(sock, msg);
+    else if (command === "/help") await help(sock, msg);
   });
 }
 
