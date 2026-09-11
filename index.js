@@ -2,7 +2,9 @@ const http = require("http");
 const {
   default: makeWASocket,
   useMultiFileAuthState,
-  DisconnectReason
+  DisconnectReason,
+  Browsers,
+  fetchLatestWaWebVersion
 } = require("@whiskeysockets/baileys");
 
 const pino = require("pino");
@@ -13,7 +15,6 @@ const game = require("./commands/game");
 const ping = require("./commands/ping");
 const help = require("./commands/help");
 
-// Render Web Services need an HTTP listener.
 const port = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
@@ -21,11 +22,16 @@ http.createServer((req, res) => {
 }).listen(port, () => console.log(`STUNNER MD server listening on port ${port}`));
 
 async function startBot() {
-  const { state, saveCreds } =
-    await useMultiFileAuthState("./session");
+  const { state, saveCreds } = await useMultiFileAuthState("./session");
+  const { version } = await fetchLatestWaWebVersion();
+
+  console.log(`Using WhatsApp Web version ${version.join(".")}`);
 
   const sock = makeWASocket({
     auth: state,
+    version,
+    browser: Browsers.ubuntu("Chrome"),
+    syncFullHistory: false,
     logger: pino({ level: "silent" })
   });
 
@@ -39,11 +45,15 @@ async function startBot() {
       return;
     }
 
-    const code = await sock.requestPairingCode(phone);
-
-    console.log("STUNNER MD pairing code:");
-    console.log(code);
-    console.log("Use WhatsApp > Linked devices > Link a device > Link with phone number.");
+    try {
+      const code = await sock.requestPairingCode(phone);
+      console.log("STUNNER MD pairing code:");
+      console.log(code);
+      console.log("Use WhatsApp > Linked devices > Link a device > Link with phone number.");
+    } catch (error) {
+      console.error("Pairing request failed:", error);
+      return;
+    }
   }
 
   sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
@@ -53,18 +63,14 @@ async function startBot() {
 
     if (connection === "close") {
       const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !==
-        DisconnectReason.loggedOut;
+        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
 
-      if (shouldReconnect) {
-        setTimeout(startBot, 3000);
-      }
+      if (shouldReconnect) setTimeout(startBot, 3000);
     }
   });
 
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages[0];
-
     if (!msg.message || msg.key.fromMe) return;
 
     const text =
