@@ -1,3 +1,4 @@
+const http = require("http");
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -5,7 +6,6 @@ const {
 } = require("@whiskeysockets/baileys");
 
 const pino = require("pino");
-const readline = require("readline");
 
 const menu = require("./commands/menu");
 const joke = require("./commands/joke");
@@ -13,16 +13,12 @@ const game = require("./commands/game");
 const ping = require("./commands/ping");
 const help = require("./commands/help");
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
-
-function ask(question) {
-  return new Promise(resolve => {
-    rl.question(question, answer => resolve(answer));
-  });
-}
+// Render Web Services need an HTTP listener.
+const port = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("STUNNER MD is running");
+}).listen(port, () => console.log(`STUNNER MD server listening on port ${port}`));
 
 async function startBot() {
   const { state, saveCreds } =
@@ -36,22 +32,23 @@ async function startBot() {
   sock.ev.on("creds.update", saveCreds);
 
   if (!state.creds.registered) {
-    const phone = await ask(
-      "Enter your WhatsApp number with country code (example: 2547XXXXXXXX): "
-    );
+    const phone = (process.env.PHONE_NUMBER || "").replace(/\D/g, "");
 
-    const cleanNumber = phone.replace(/\D/g, "");
+    if (!phone) {
+      console.error("PHONE_NUMBER environment variable is not set.");
+      return;
+    }
 
-    const code = await sock.requestPairingCode(cleanNumber);
+    const code = await sock.requestPairingCode(phone);
 
-    console.log("\n⚡ STUNNER MD PAIRING CODE:");
+    console.log("STUNNER MD pairing code:");
     console.log(code);
-    console.log("\nOpen WhatsApp → Linked devices → Link a device → Link with phone number.");
+    console.log("Use WhatsApp > Linked devices > Link a device > Link with phone number.");
   }
 
   sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
     if (connection === "open") {
-      console.log("⚡ STUNNER MD is connected!");
+      console.log("STUNNER MD is connected!");
     }
 
     if (connection === "close") {
@@ -60,7 +57,7 @@ async function startBot() {
         DisconnectReason.loggedOut;
 
       if (shouldReconnect) {
-        startBot();
+        setTimeout(startBot, 3000);
       }
     }
   });
@@ -89,4 +86,4 @@ async function startBot() {
   });
 }
 
-startBot();
+startBot().catch(error => console.error("Bot startup error:", error));
