@@ -1,14 +1,7 @@
 const http = require("http");
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  Browsers,
-  fetchLatestWaWebVersion
-} = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestWaWebVersion } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const QRCode = require("qrcode");
-
 const menu = require("./commands/menu");
 const joke = require("./commands/joke");
 const game = require("./commands/game");
@@ -21,47 +14,41 @@ let botStatus = "starting";
 let pairingCode = null;
 
 http.createServer(async (req, res) => {
-  if (req.url === "/") {
+  const pathname = new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname;
+
+  if (pathname === "/") {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>STUNNER MD</title><style>body{font-family:Arial;background:#111;color:#fff;text-align:center;padding:30px}img{background:#fff;padding:12px;max-width:85vw}a{color:#25d366}.box{max-width:600px;margin:auto}</style></head><body><div class="box"><h1>⚡ STUNNER MD</h1><p>Status: <b>${botStatus}</b></p><p><a href="/pair">Open pairing page</a></p></div></body></html>`);
+    res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>STUNNER MD</title><style>body{font-family:Arial;background:#111;color:#fff;text-align:center;padding:30px}a{color:#25d366;font-size:20px}.box{max-width:600px;margin:auto}</style></head><body><div class="box"><h1>⚡ STUNNER MD</h1><p>Status: <b>${botStatus}</b></p><p><a href="/pair">Open QR pairing</a></p><p><a href="/qr">Open QR code</a></p><p><a href="/status">Check status</a></p></div></body></html>`);
     return;
   }
 
-  if (req.url === "/pair") {
+  if (pathname === "/pair" || pathname === "/qr") {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     if (!latestQr) {
-      res.end(`<!doctype html><html><body style="font-family:Arial;text-align:center;background:#111;color:#fff;padding:30px"><h1>⚡ STUNNER MD</h1><p>QR code is not ready yet.</p><p>Refresh this page in a few seconds.</p></body></html>`);
+      res.end(`<!doctype html><html><head><meta http-equiv="refresh" content="5"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font-family:Arial;text-align:center;background:#111;color:#fff;padding:30px"><h1>⚡ STUNNER MD</h1><p>QR code is not ready yet.</p><p>This page will refresh automatically.</p></body></html>`);
       return;
     }
     const dataUrl = await QRCode.toDataURL(latestQr);
-    res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="10"></head><body style="font-family:Arial;text-align:center;background:#111;color:#fff;padding:20px"><h1>⚡ STUNNER MD QR</h1><p>WhatsApp → Linked devices → Link a device</p><img src="${dataUrl}" alt="WhatsApp QR"><p>This page refreshes automatically.</p></body></html>`);
+    res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="10"></head><body style="font-family:Arial;text-align:center;background:#111;color:#fff;padding:20px"><h1>⚡ STUNNER MD QR</h1><p>WhatsApp → Linked devices → Link a device</p><img src="${dataUrl}" alt="WhatsApp QR" style="background:#fff;padding:12px;max-width:85vw"><p>This page refreshes automatically.</p></body></html>`);
     return;
   }
 
-  if (req.url === "/status") {
+  if (pathname === "/status") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: botStatus, pairingCode: pairingCode ? "available" : null }));
     return;
   }
 
-  res.writeHead(404);
-  res.end("Not found");
+  res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end("Not Found");
 }).listen(port, () => console.log(`STUNNER MD server listening on port ${port}`));
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState("./session");
   const { version } = await fetchLatestWaWebVersion();
-
   console.log(`Using WhatsApp Web version ${version.join(".")}`);
 
-  const sock = makeWASocket({
-    auth: state,
-    version,
-    browser: Browsers.ubuntu("Chrome"),
-    syncFullHistory: false,
-    logger: pino({ level: "silent" })
-  });
-
+  const sock = makeWASocket({ auth: state, version, browser: Browsers.ubuntu("Chrome"), syncFullHistory: false, logger: pino({ level: "silent" }) });
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
@@ -69,26 +56,21 @@ async function startBot() {
       latestQr = qr;
       botStatus = "QR ready";
       pairingCode = null;
-      console.log("STUNNER MD QR is ready. Open /pair on the Render URL to scan it.");
+      console.log("STUNNER MD QR is ready. Open /pair or /qr on the Render URL to scan it.");
     }
-
     if (connection === "open") {
       latestQr = null;
       pairingCode = null;
       botStatus = "connected";
       console.log("STUNNER MD is connected!");
     }
-
     if (connection === "close") {
       botStatus = "disconnected";
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       if (shouldReconnect) setTimeout(startBot, 5000);
     }
   });
 
-  // PHONE_NUMBER enables the alternative phone-number pairing method.
-  // Set PAIRING_MODE=phone to use it; otherwise QR mode is used.
   if (!state.creds.registered && process.env.PAIRING_MODE === "phone") {
     const phone = (process.env.PHONE_NUMBER || "").replace(/\D/g, "");
     if (!phone) {
@@ -99,8 +81,7 @@ async function startBot() {
         const code = await sock.requestPairingCode(phone);
         pairingCode = code;
         botStatus = "phone pairing ready";
-        console.log("STUNNER MD phone pairing code:");
-        console.log(code);
+        console.log("STUNNER MD phone pairing code generated.");
         console.log("WhatsApp > Linked devices > Link a device > Link with phone number.");
       } catch (error) {
         console.error("Phone pairing failed:", error);
@@ -111,10 +92,8 @@ async function startBot() {
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages[0];
     if (!msg.message || msg.key.fromMe) return;
-
     const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
     const command = text.trim().toLowerCase();
-
     try {
       if (command === "/menu") await menu(sock, msg);
       else if (command === "/joke") await joke(sock, msg);
