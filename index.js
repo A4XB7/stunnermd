@@ -7,8 +7,10 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const port = process.env.PORT || 3000;
 const PHONE_NUMBER = (process.env.PHONE_NUMBER || '').replace(/\D/g, '');
 const SESSION_DIR = './session';
-let latestQr = null, botStatus = 'starting', pairingCode = null, waSocket = null, pairingBusy = false, reconnectTimer = null, starting = false, pairingRequested = false;
+let latestQr = null, botStatus = 'starting', pairingCode = null, waSocket = null, pairingBusy = false, reconnectTimer = null, starting = false;
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
+let connectionGeneration = 0;
+let reconnectDelay = 3000;
 
 function normalizePhone(raw) {
   let phone = String(raw || '').replace(/\D/g, '');
@@ -46,8 +48,8 @@ http.createServer(async (req, res) => {
           else {
             pairingBusy = true;
             try {
+              latestQr = null;
               pairingCode = await waSocket.requestPairingCode(phone);
-              pairingRequested = true;
               botStatus = 'phone pairing ready';
               message = '<div class="msg">✅ Pairing code generated above. Enter it in WhatsApp linked-device settings.</div>';
             } catch (e) {
@@ -77,60 +79,68 @@ async function resetSession() {
   catch (e) { console.error('Could not clear session:', e?.message || e); }
 }
 
-function scheduleReconnect(delay = 5000) { clearTimeout(reconnectTimer); reconnectTimer = setTimeout(() => startBot(), delay); }
+function scheduleReconnect(delay = reconnectDelay) {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => startBot(), delay);
+}
 
 async function startBot() {
   if (starting) return;
   starting = true;
   clearTimeout(reconnectTimer);
+  const generation = ++connectionGeneration;
   botStatus = 'connecting';
   latestQr = null;
   pairingCode = null;
-  pairingRequested = false;
   try {
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestWaWebVersion();
     console.log(`Using WhatsApp Web version ${version.join('.')}`);
-    waSocket = makeWASocket({ auth:{creds:state.creds, keys:makeCacheableSignalKeyStore(state.keys, logger)}, version, browser:Browsers.ubuntu('Chrome'), syncFullHistory:false, markOnlineOnConnect:false, generateHighQualityLinkPreview:false, logger });
-    waSocket.ev.on('creds.update', saveCreds);
-    waSocket.ev.on('connection.update', async ({connection,lastDisconnect,qr}) => {
+    const socket = makeWASocket({ auth:{creds:state.creds, keys:makeCacheableSignalKeyStore(state.keys, logger)}, version, browser:Browsers.ubuntu('Chrome'), syncFullHistory:false, markOnlineOnConnect:false, generateHighQualityLinkPreview:false, logger });
+    waSocket = socket;
+    socket.ev.on('creds.update', saveCreds);
+    socket.ev.on('connection.update', async ({connection,lastDisconnect,qr}) => {
+      if (generation !== connectionGeneration) return;
       if (qr) {
         latestQr = qr;
-        if (botStatus !== 'phone pairing ready') botStatus = 'QR ready';
+        if (!state.creds.registered) botStatus = 'QR ready';
         console.log('STUNNER MD QR is ready.');
-        if (!state.creds.registered && PHONE_NUMBER) requestPhonePairing(waSocket, PHONE_NUMBER);
       }
-      if (connection === 'open') { latestQr=null; pairingCode=null; botStatus='connected'; pairingRequested=false; console.log('STUNNER MD is connected!'); }
+      if (connection === 'open') {
+        latestQr=null; pairingCode=null; botStatus='connected'; reconnectDelay=3000;
+        console.log('STUNNER MD is connected!');
+      }
       if (connection === 'close') {
         const code = lastDisconnect?.error?.output?.statusCode;
         const reason = lastDisconnect?.error?.message || lastDisconnect?.error?.output?.payload?.message || 'unknown';
         console.log(`WhatsApp connection closed. statusCode: ${code ?? 'unknown'} reason: ${reason}`);
-        botStatus='disconnected'; waSocket=null; pairingRequested=false;
-        if (code === DisconnectReason.loggedOut || code === 401) { await resetSession(); botStatus='pairing required'; scheduleReconnect(3000); }
-        else scheduleReconnect(5000);
+        if (generation !== connectionGeneration) return;
+        if (waSocket === socket) waSocket = null;
+        pairingCode = null;
+        if (code === DisconnectReason.loggedOut || code === 401) {
+          await resetSession();
+          botStatus='pairing required';
+          reconnectDelay=3000;
+        } else {
+          botStatus='reconnecting';
+          reconnectDelay=Math.min(Math.max(reconnectDelay * 2, 3000), 30000);
+        }
+        scheduleReconnect(reconnectDelay);
       }
     });
-    waSocket.ev.on('messages.upsert', async ({messages}) => {
+    socket.ev.on('messages.upsert', async ({messages}) => {
+      if (generation !== connectionGeneration || waSocket !== socket) return;
       const msg=messages?.[0]; if(!msg?.message || msg.key.fromMe) return;
       const command=(msg.message.conversation || msg.message.extendedTextMessage?.text || '').trim().toLowerCase();
-      try { if(command==='/menu') await require('./commands/menu')(waSocket,msg); else if(command==='/joke') await require('./commands/joke')(waSocket,msg); else if(command==='/game') await require('./commands/game')(waSocket,msg); else if(command==='/ping') await require('./commands/ping')(waSocket,msg); else if(command==='/help') await require('./commands/help')(waSocket,msg); } catch(e) { console.error('Command error:', e?.stack || e?.message || e); }
+      try { if(command==='/menu') await require('./commands/menu')(socket,msg); else if(command==='/joke') await require('./commands/joke')(socket,msg); else if(command==='/game') await require('./commands/game')(socket,msg); else if(command==='/ping') await require('./commands/ping')(socket,msg); else if(command==='/help') await require('./commands/help')(socket,msg); } catch(e) { console.error('Command error:', e?.stack || e?.message || e); }
     });
-  } catch(e) { console.error('Bot startup error:', e?.stack || e); botStatus='disconnected'; waSocket=null; scheduleReconnect(5000); }
-  finally { starting=false; }
-}
-
-async function requestPhonePairing(socket, phone) {
-  if (!socket || pairingRequested || !phone) return;
-  const normalized = normalizePhone(phone);
-  if (!/^2547\d{8}$/.test(normalized)) return;
-  pairingRequested = true;
-  try {
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    if (!waSocket || botStatus === 'connected') return;
-    pairingCode = await socket.requestPairingCode(normalized);
-    botStatus='phone pairing ready';
-    console.log('Phone pairing code generated successfully.');
-  } catch(e) { pairingRequested=false; console.error('Automatic phone pairing failed:', e?.stack || e?.message || e); }
+  } catch(e) {
+    console.error('Bot startup error:', e?.stack || e);
+    botStatus='reconnecting';
+    waSocket=null;
+    reconnectDelay=Math.min(Math.max(reconnectDelay * 2, 3000), 30000);
+    scheduleReconnect(reconnectDelay);
+  } finally { starting=false; }
 }
 
 process.on('uncaughtException', err => console.error('Uncaught exception:', err?.stack || err));
