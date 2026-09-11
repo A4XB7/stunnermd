@@ -16,19 +16,18 @@ let waSocket = null;
 let pairingBusy = false;
 
 async function page(phoneMessage = "") {
-  let qrHtml = `<p>QR code is not ready yet. This page refreshes automatically.</p>`;
+  let qrHtml = `<p>QR code is not ready yet. This page refreshes automatically every 2 minutes.</p>`;
   if (latestQr) {
     const dataUrl = await QRCode.toDataURL(latestQr);
     qrHtml = `<p>Open WhatsApp → Linked devices → Link a device.</p><img src="${dataUrl}" alt="WhatsApp QR code">`;
   }
 
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="12"><title>STUNNER MD Pairing</title><style>
-  *{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#0b0b0b;color:#fff;text-align:center;padding:24px}.box{max-width:760px;margin:auto}h1{color:#25d366;font-size:34px;margin-bottom:6px}.status{color:#aaa;margin-bottom:25px}.options{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{padding:22px;border:1px solid #292929;border-radius:16px;background:#151515;box-shadow:0 8px 25px #0006}h2{margin-top:0}input{width:100%;padding:14px;border-radius:10px;border:1px solid #444;background:#222;color:#fff;font-size:17px;margin-top:10px}button{width:100%;margin-top:10px;padding:14px;border:0;border-radius:10px;background:#25d366;color:#000;font-weight:bold;font-size:17px;cursor:pointer}.prefix{font-size:18px;color:#25d366;font-weight:bold}.code{font-size:30px;font-weight:bold;letter-spacing:6px;background:#222;padding:14px;border-radius:10px;color:#25d366;margin:12px 0}.msg{padding:12px;border-radius:10px;background:#202020;margin-top:14px}.qr img{max-width:100%;border-radius:12px;background:#fff;padding:10px}@media(max-width:650px){.options{grid-template-columns:1fr}}
-a{color:#25d366}
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="120"><title>STUNNER MD Pairing</title><style>
+  *{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#0b0b0b;color:#fff;text-align:center;padding:24px}.box{max-width:760px;margin:auto}h1{color:#25d366;font-size:34px;margin-bottom:6px}.status{color:#aaa;margin-bottom:25px}.options{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{padding:22px;border:1px solid #292929;border-radius:16px;background:#151515;box-shadow:0 8px 25px #0006}h2{margin-top:0}input{width:100%;padding:14px;border-radius:10px;border:1px solid #444;background:#222;color:#fff;font-size:17px;margin-top:10px}button{width:100%;margin-top:10px;padding:14px;border:0;border-radius:10px;background:#25d366;color:#000;font-weight:bold;font-size:17px;cursor:pointer}.prefix{font-size:18px;color:#25d366;font-weight:bold}.code{font-size:30px;font-weight:bold;letter-spacing:6px;background:#222;padding:14px;border-radius:10px;color:#25d366;margin:12px 0}.msg{padding:12px;border-radius:10px;background:#202020;margin-top:14px}.qr img{max-width:100%;border-radius:12px;background:#fff;padding:10px}@media(max-width:650px){.options{grid-template-columns:1fr}}a{color:#25d366}
 </style></head><body><div class="box"><h1>⚡ STUNNER MD</h1><div class="status">Status: <b>${botStatus}</b></div><div class="options">
 <section class="card"><h2>OPTION 1 — 📱 +254 Pairing</h2><p>Enter your Kenyan WhatsApp number.</p><div class="prefix">🇰🇪 +254</div><form method="POST" action="/pair-phone"><input name="phone" inputmode="numeric" pattern="7[0-9]{8}" maxlength="9" placeholder="7XXXXXXXX" required><button type="submit">Generate Pairing Code</button></form>${phoneMessage}</section>
 <section class="card qr"><h2>OPTION 2 — 🔳 QR Pairing</h2>${qrHtml}</section>
-</div><p style="margin-top:24px"><a href="/status">Check bot status</a></p><p style="color:#777;font-size:13px">This page refreshes automatically while pairing is available.</p></div></body></html>`;
+</div><p style="margin-top:24px"><a href="/status">Check bot status</a></p><p style="color:#777;font-size:13px">This page refreshes automatically every 2 minutes.</p></div></body></html>`;
 }
 
 http.createServer(async (req, res) => {
