@@ -2,10 +2,9 @@ const http = require('http');
 const fs = require('fs/promises');
 const qrcode = require('qrcode');
 const pino = require('pino');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, Browsers, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, Browsers, makeCacheableSignalKeyStore, downloadMediaMessage } = require('@whiskeysockets/baileys');
 
 const port = process.env.PORT || 3000;
-const PHONE_NUMBER = (process.env.PHONE_NUMBER || '').replace(/\D/g, '');
 const SESSION_DIR = './session';
 let latestQr = null, botStatus = 'starting', pairingCode = null, waSocket = null, pairingBusy = false, reconnectTimer = null, starting = false;
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -84,6 +83,62 @@ function scheduleReconnect(delay = reconnectDelay) {
   reconnectTimer = setTimeout(() => startBot(), delay);
 }
 
+function getText(msg) {
+  return (msg?.message?.conversation || msg?.message?.extendedTextMessage?.text || '').trim();
+}
+
+function getQuotedMessage(msg) {
+  return msg?.message?.extendedTextMessage?.contextInfo?.quotedMessage || null;
+}
+
+async function sendQuotedMedia(socket, msg) {
+  const quoted = getQuotedMessage(msg);
+  if (!quoted) {
+    await socket.sendMessage(msg.key.remoteJid, {text:'📥 Reply to a photo, video, audio, or document with /download.'});
+    return;
+  }
+  const type = Object.keys(quoted)[0];
+  if (!['imageMessage','videoMessage','audioMessage','documentMessage'].includes(type)) {
+    await socket.sendMessage(msg.key.remoteJid, {text:'❌ The quoted message does not contain downloadable media.'});
+    return;
+  }
+  try {
+    const mediaMsg = {key: {...msg.key, fromMe:false}, message: quoted};
+    const buffer = await downloadMediaMessage(mediaMsg, 'buffer', {}, {logger, reuploadRequest: socket.updateMediaMessage});
+    const m = quoted[type];
+    const out = type === 'imageMessage' ? {image:buffer, caption:'📥 STUNNER MD'} :
+      type === 'videoMessage' ? {video:buffer, caption:'📥 STUNNER MD'} :
+      type === 'audioMessage' ? {audio:buffer, mimetype:m.mimetype || 'audio/mpeg'} :
+      {document:buffer, mimetype:m.mimetype || 'application/octet-stream', fileName:m.fileName || 'download'};
+    await socket.sendMessage(msg.key.remoteJid, out);
+  } catch (e) {
+    console.error('Download error:', e?.stack || e?.message || e);
+    await socket.sendMessage(msg.key.remoteJid, {text:'❌ Download failed. Try replying to the original media message again.'});
+  }
+}
+
+async function sendProfilePicture(socket, msg) {
+  const jid = msg.key.participant || msg.key.remoteJid;
+  try {
+    const url = await socket.profilePictureUrl(jid, 'image');
+    await socket.sendMessage(msg.key.remoteJid, {image:{url}, caption:'🖼️ Profile picture — STUNNER MD'});
+  } catch (e) {
+    await socket.sendMessage(msg.key.remoteJid, {text:'❌ No profile picture is available for this contact.'});
+  }
+}
+
+async function handleCommand(socket, msg) {
+  const text = getText(msg);
+  const command = text.split(/\s+/)[0].toLowerCase();
+  if (command === '/menu') return require('./commands/menu')(socket,msg);
+  if (command === '/joke') return require('./commands/joke')(socket,msg);
+  if (command === '/game') return require('./commands/game')(socket,msg);
+  if (command === '/ping') return require('./commands/ping')(socket,msg);
+  if (command === '/help') return require('./commands/help')(socket,msg);
+  if (command === '/getpp') return sendProfilePicture(socket,msg);
+  if (command === '/download' || command === '/dl') return sendQuotedMedia(socket,msg);
+}
+
 async function startBot() {
   if (starting) return;
   starting = true;
@@ -128,11 +183,18 @@ async function startBot() {
         scheduleReconnect(reconnectDelay);
       }
     });
-    socket.ev.on('messages.upsert', async ({messages}) => {
+    socket.ev.on('messages.upsert', async ({messages,type}) => {
       if (generation !== connectionGeneration || waSocket !== socket) return;
-      const msg=messages?.[0]; if(!msg?.message || msg.key.fromMe) return;
-      const command=(msg.message.conversation || msg.message.extendedTextMessage?.text || '').trim().toLowerCase();
-      try { if(command==='/menu') await require('./commands/menu')(socket,msg); else if(command==='/joke') await require('./commands/joke')(socket,msg); else if(command==='/game') await require('./commands/game')(socket,msg); else if(command==='/ping') await require('./commands/ping')(socket,msg); else if(command==='/help') await require('./commands/help')(socket,msg); } catch(e) { console.error('Command error:', e?.stack || e?.message || e); }
+      for (const msg of messages || []) {
+        if (!msg?.message) continue;
+        // Automatically mark WhatsApp Status posts as read.
+        if (msg.key?.remoteJid === 'status@broadcast') {
+          try { await socket.readMessages([msg.key]); } catch (e) { console.error('Status read error:', e?.message || e); }
+          continue;
+        }
+        if (msg.key.fromMe) continue;
+        try { await handleCommand(socket,msg); } catch(e) { console.error('Command error:', e?.stack || e?.message || e); }
+      }
     });
   } catch(e) {
     console.error('Bot startup error:', e?.stack || e);
